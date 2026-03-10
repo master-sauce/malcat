@@ -2,6 +2,16 @@
 
 A fast, low-false-positive static analyzer for detecting malicious patterns in source code and compiled binaries. Built for scanning open-source projects you've cloned and want to trust before running.
 
+
+## installation
+
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/master-sauce/malcat/main/install.sh | bash
+
+# Windows
+irm https://raw.githubusercontent.com/master-sauce/malcat/main/install.ps1 | iex
+
+
 ## Philosophy
 
 Most scanners fire on every `exec()`, `eval()`, or backtick — generating hundreds of false positives in normal code. malcat takes the opposite approach: rules require **specific combinations** that are nearly impossible to explain as innocent code. A single `exec()` call never fires. A socket connection followed by a shell spawn does.
