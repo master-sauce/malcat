@@ -36,7 +36,6 @@ malcheck [flags] <file|directory> [<file|directory>...] [-o output]
 | Flag | Description |
 |------|-------------|
 | `-r`, `--recursive` | Scan directories recursively |
-| `-v`, `--verbose` | Verbose output |
 | `--severity` | Minimum severity to report: `low`, `medium`, `high`, `critical` (default: `low`) |
 | `--depth` | Max recursion depth, `-1` = unlimited (default: `-1`) |
 | `--ext` | Comma-separated file extensions to scan, e.g. `.py,.sh,.js`. Empty = all |
