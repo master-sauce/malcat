@@ -4,6 +4,7 @@ set -e
 REPO="master-sauce/malcat"
 BINARY_NAME="malcat"
 INSTALL_DIR="$HOME/.local/bin"
+BINARY_PATH="$INSTALL_DIR/$BINARY_NAME"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/main/malcat"
 
 # ── Colors ────────────────────────────────────────────────────────────────────
@@ -21,35 +22,36 @@ case "$OS" in
   *)       error "Unsupported OS: $OS" ;;
 esac
 
-BINARY_PATH="$INSTALL_DIR/$BINARY_NAME"
-
 # ── Uninstall ─────────────────────────────────────────────────────────────────
 uninstall() {
   echo ""
   info "Uninstalling malcat..."
 
+  # Remove the binary
   if [ -f "$BINARY_PATH" ]; then
     rm -f "$BINARY_PATH"
     success "Removed binary: $BINARY_PATH"
   else
-    if command -v go &>/dev/null; then
-      GO_BIN="$(go env GOPATH)/bin/$BINARY_NAME"
-      if [ -f "$GO_BIN" ]; then
-        rm -f "$GO_BIN"
-        success "Removed binary: $GO_BIN"
-      fi
-    else
-      warn "Binary not found — nothing to remove."
-    fi
+    warn "Binary not found at $BINARY_PATH — already removed?"
   fi
 
+  # Clean PATH entries from all common shell RC files
+  # Removes both the comment line and any line referencing our INSTALL_DIR
   remove_from_rc() {
     local rc="$1"
-    if [ -f "$rc" ] && grep -qF "malcat installer" "$rc"; then
-      sed -i.bak '/# Added by malcat installer/d' "$rc"
-      sed -i.bak "\|${INSTALL_DIR}|d" "$rc"
-      rm -f "${rc}.bak"
-      success "Removed PATH entry from $rc"
+    [ -f "$rc" ] || return
+
+    # Check if our install dir is mentioned at all in the file
+    if grep -qF "$INSTALL_DIR" "$rc" || grep -qF "malcat installer" "$rc"; then
+      # Use a temp file for safe in-place editing (works on both Linux and macOS)
+      local tmp
+      tmp="$(mktemp)"
+      grep -v "# Added by malcat installer" "$rc" \
+        | grep -v "export PATH.*$INSTALL_DIR" \
+        | grep -v "set -gx PATH.*$INSTALL_DIR" \
+        > "$tmp"
+      mv "$tmp" "$rc"
+      success "Cleaned PATH entry from $rc"
     fi
   }
 
@@ -57,16 +59,10 @@ uninstall() {
   remove_from_rc "$HOME/.bash_profile"
   remove_from_rc "$HOME/.zshrc"
   remove_from_rc "$HOME/.profile"
-
-  FISH_CFG="$HOME/.config/fish/config.fish"
-  if [ -f "$FISH_CFG" ] && grep -qF "$INSTALL_DIR" "$FISH_CFG"; then
-    sed -i.bak "\|${INSTALL_DIR}|d" "$FISH_CFG"
-    rm -f "${FISH_CFG}.bak"
-    success "Removed PATH entry from $FISH_CFG"
-  fi
+  remove_from_rc "$HOME/.config/fish/config.fish"
 
   echo ""
-  success "✓ malcat has been uninstalled. Open a new terminal to clear your PATH."
+  success "✓ malcat uninstalled. Open a new terminal to fully clear your PATH."
   echo ""
   exit 0
 }
@@ -93,7 +89,7 @@ echo ""
 
 install_via_download() {
   local url="$1"
-  info "Downloading binary from GitHub..."
+  info "Downloading from: $url"
 
   mkdir -p "$INSTALL_DIR"
   TMP="$(mktemp)"
@@ -106,9 +102,17 @@ install_via_download() {
     error "Neither curl nor wget found. Please install one and retry."
   fi
 
+  # Sanity check: make sure we got a binary, not an HTML error page
+  local filetype
+  filetype="$(file "$TMP" 2>/dev/null || echo '')"
+  if echo "$filetype" | grep -qi "HTML\|text"; then
+    rm -f "$TMP"
+    error "Download returned an HTML page instead of a binary.\nCheck that the URL is correct: $url"
+  fi
+
   chmod +x "$TMP"
-  mv "$TMP" "$INSTALL_DIR/$BINARY_NAME"
-  success "Installed to $INSTALL_DIR/$BINARY_NAME"
+  mv "$TMP" "$BINARY_PATH"
+  success "Installed to $BINARY_PATH"
 }
 
 install_via_go() {
@@ -118,6 +122,7 @@ install_via_go() {
   fi
   go install "github.com/${REPO}@latest"
   INSTALL_DIR="$(go env GOPATH)/bin"
+  BINARY_PATH="$INSTALL_DIR/$BINARY_NAME"
   success "Installed via 'go install' to $INSTALL_DIR"
 }
 
@@ -150,10 +155,10 @@ case "$SHELL_NAME" in
         [ -f "$HOME/.bash_profile" ] && add_to_path "$HOME/.bash_profile" ;;
   fish)
     mkdir -p "$HOME/.config/fish"
-    FISH_LINE="set -gx PATH \$PATH $INSTALL_DIR"
-    if ! grep -qF "$INSTALL_DIR" "$HOME/.config/fish/config.fish" 2>/dev/null; then
-      echo "$FISH_LINE" >> "$HOME/.config/fish/config.fish"
-      info "Added $INSTALL_DIR to PATH in fish config."
+    FISH_RC="$HOME/.config/fish/config.fish"
+    if ! grep -qF "$INSTALL_DIR" "$FISH_RC" 2>/dev/null; then
+      printf "\n# Added by malcat installer\nset -gx PATH \$PATH %s\n" "$INSTALL_DIR" >> "$FISH_RC"
+      info "Added $INSTALL_DIR to PATH in $FISH_RC"
     fi
     ;;
   *) add_to_path "$HOME/.profile" ;;
