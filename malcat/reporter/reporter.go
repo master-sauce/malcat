@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"malcheck/analyzer"
+	"malcat/analyzer"
 )
 
 // Reporter writes scan results in a given format

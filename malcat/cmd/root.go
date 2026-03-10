@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"malcheck/analyzer"
-	"malcheck/reporter"
+	"malcat/analyzer"
+	"malcat/reporter"
 )
 
 func inferFormat(outputFile string) string {
@@ -76,10 +76,10 @@ func Execute() error {
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `
-malcheck - Static malicious behavior analyzer
+malcat - Static malicious behavior analyzer
 
 USAGE:
-  malcheck [flags] <file|directory> [<file|directory>...] [-o output]
+  malcat [flags] <file|directory> [<file|directory>...] [-o output]
 
 FLAGS:
   -r, --recursive        Recursively scan directories
@@ -93,12 +93,12 @@ FLAGS:
                            other  -> plain text (default: stdout)
 
 EXAMPLES:
-  malcheck suspicious.sh
-  malcheck -r ./project
-  malcheck -r --severity high ./src -o report.json
-  malcheck -r --ext .py,.sh /opt/scripts -o results.csv
-  malcheck --bin suspicious.exe -o report.json
-  malcheck -r --bin ./mixed_directory
+  malcat suspicious.sh
+  malcat -r ./project
+  malcat -r --severity high ./src -o report.json
+  malcat -r --ext .py,.sh /opt/scripts -o results.csv
+  malcat --bin suspicious.exe -o report.json
+  malcat -r --bin ./mixed_directory
 
 `)
 	}

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"malcheck/cmd"
+	"malcat/cmd"
 )
 
 func main() {
