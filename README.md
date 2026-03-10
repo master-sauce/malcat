@@ -1,10 +1,10 @@
-# malcheck
+# malcat
 
 A fast, low-false-positive static analyzer for detecting malicious patterns in source code and compiled binaries. Built for scanning open-source projects you've cloned and want to trust before running.
 
 ## Philosophy
 
-Most scanners fire on every `exec()`, `eval()`, or backtick — generating hundreds of false positives in normal code. Malcheck takes the opposite approach: rules require **specific combinations** that are nearly impossible to explain as innocent code. A single `exec()` call never fires. A socket connection followed by a shell spawn does.
+Most scanners fire on every `exec()`, `eval()`, or backtick — generating hundreds of false positives in normal code. malcat takes the opposite approach: rules require **specific combinations** that are nearly impossible to explain as innocent code. A single `exec()` call never fires. A socket connection followed by a shell spawn does.
 
 The focus is on:
 - **C2 communication** — reverse shells, download cradles, beacon patterns
@@ -20,15 +20,15 @@ The focus is on:
 Requires Go 1.21 or later.
 
 ```bash
-git clone https://github.com/your-username/malcheck.git
-cd malcheck
-go build -o malcheck .
+git clone https://github.com/your-username/malcat.git
+cd malcat
+go build -o malcat .
 ```
 
 ## Usage
 
 ```
-malcheck [flags] <file|directory> [<file|directory>...] [-o output]
+malcat [flags] <file|directory> [<file|directory>...] [-o output]
 ```
 
 ### Flags
@@ -46,28 +46,28 @@ malcheck [flags] <file|directory> [<file|directory>...] [-o output]
 
 ```bash
 # Scan a single file
-malcheck suspicious.sh
+malcat suspicious.sh
 
 # Recursively scan a cloned repo
-malcheck -r ./cloned-repo
+malcat -r ./cloned-repo
 
 # Only show high and critical findings
-malcheck -r --severity high ./cloned-repo
+malcat -r --severity high ./cloned-repo
 
 # Scan only Python and shell files
-malcheck -r --ext .py,.sh ./cloned-repo
+malcat -r --ext .py,.sh ./cloned-repo
 
 # Scan a compiled binary
-malcheck --bin ./suspicious.exe
+malcat --bin ./suspicious.exe
 
 # Save results as JSON
-malcheck -r ./cloned-repo -o report.json
+malcat -r ./cloned-repo -o report.json
 
 # Save results as CSV
-malcheck -r ./cloned-repo -o results.csv
+malcat -r ./cloned-repo -o results.csv
 
 # Scan a directory including binaries, save JSON
-malcheck -r --bin ./cloned-repo -o report.json
+malcat -r --bin ./cloned-repo -o report.json
 ```
 
 ## Output
@@ -95,8 +95,8 @@ Each finding shows the severity, rule name, line number, category, and a trimmed
 ### Output formats
 
 - **Text** (default) — colorized terminal output
-- **JSON** — `malcheck -r ./repo -o report.json`
-- **CSV** — `malcheck -r ./repo -o report.csv`
+- **JSON** — `malcat -r ./repo -o report.json`
+- **CSV** — `malcat -r ./repo -o report.csv`
 
 ## Rule sets
 
@@ -191,7 +191,7 @@ Keywords are optional pre-filters — the regex only runs on lines that contain 
 Rebuild after changes:
 
 ```bash
-go build -o malcheck .
+go build -o malcat .
 ```
 
 ## Limitations
