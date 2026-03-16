@@ -36,6 +36,7 @@ For compiled binaries, malcat goes further than string extraction: it parses PE 
 - **Destructive payloads** — disk wipes, ransomware patterns, fork bombs, recursive root deletion
 - **LOLBins** — certutil, regsvr32, rundll32, WMIC, mshta, bitsadmin abuse
 - **Runtime decryption** — XOR loops, AES/RC4 with hardcoded keys, polymorphic stubs
+- **Obfuscated C2 construction** — strings built from char codes, byte arrays, hex escapes, and unicode escapes across Python, JavaScript, PowerShell, C/C++, Go, and Rust
 - **PE structural anomalies** — packed sections, TLS callbacks, overlay data, W+X sections, import triads
 - **Disassembly** — NOP sleds, ROP chains, CPUID/RDTSC evasion, PEB walks, direct syscall stubs
 
@@ -258,17 +259,127 @@ For example, a Go binary compiled with `GOARCH=amd64 GOOS=windows` produces sect
 | DIS006 | Self-referencing JMP — infinite loop / sandbox stalling | LOW |
 | DIS007 | `FS:[0x30]` / `GS:[0x60]` access — PEB walk, manual API resolution | HIGH |
 
+### Char-building / obfuscated string rules
+
+Malware often constructs C2 addresses and shell commands at runtime from character codes so no string scanner sees `"/bin/sh"` or `"http://"` as a literal. malcat detects the **construction pattern** and the **numeric sequences** themselves.
+
+| Rule | Pattern | Severity |
+|------|---------|----------|
+| CBP001 | Python `chr(99)+chr(109)+chr(100)` chain | CRITICAL |
+| CBP002 | Python `bytes([47,98,...]).decode()` | CRITICAL |
+| CBP003 | Python `''.join([chr(x) for x in [...]])` | CRITICAL |
+| CBJ001 | JavaScript `String.fromCharCode(99,109,100,...)` | CRITICAL |
+| CBJ002 | JavaScript `\x63\x6d\x64` hex escape string (6+ escapes) | HIGH |
+| CBJ003 | JavaScript `\u0063\u006d\u0064` unicode escape string | HIGH |
+| CBJ004 | JavaScript `[99,109,100].map(c=>String.fromCharCode(c)).join('')` | CRITICAL |
+| CBPS001 | PowerShell `[char]99+[char]109+[char]100` chain | CRITICAL |
+| CBPS002 | PowerShell `-join([char[]](99,109,100,...))` | CRITICAL |
+| CBPS003 | PowerShell `[Encoding]::ASCII.GetString([byte[]](104,...))` | CRITICAL |
+| CBC001 | C/C++ `char arr[] = {99,109,100,...}` (6+ values) | HIGH |
+| CBC002 | C/C++ `WCHAR arr[] = {L'c',L'm',L'd',...}` | HIGH |
+| CBG001 | Go `string([]byte{47,98,105,110,...})` | CRITICAL |
+| CBG002 | Go `[]byte{99,109,100,...}` bare literal (6+ values) | HIGH |
+| CBR001 | Rust `String::from_utf8(vec![99,109,100,...])` | CRITICAL |
+| CBN001 | Byte sequence `47,98,105,110,47,115,104` → `/bin/sh` | CRITICAL |
+| CBN002 | Byte sequence `47,98,105,110,47,98,97,115,104` → `/bin/bash` | CRITICAL |
+| CBN003 | Byte sequence `99,109,100,46,101,120,101` → `cmd.exe` | CRITICAL |
+| CBN004 | Byte sequence `112,111,119,101,114,...` → `powershell` | CRITICAL |
+| CBN005 | Byte sequence `104,116,116,112,58,47,47` → `http://` | CRITICAL |
+| CBN006 | Byte sequence `104,116,116,112,115,58,47,47` → `https://` | CRITICAL |
+| CBN007 | Byte sequence `47,100,101,118,47,116,99,112,47` → `/dev/tcp/` | CRITICAL |
+| CBN008–010 | Hex escape sequences for `/bin/sh`, `cmd.exe`, `http://` | CRITICAL |
+| CBX001–002 | Dense numeric array (8+ values) adjacent to exec/network call | HIGH |
+
+The CBN rules are language-agnostic — they fire on the raw byte values regardless of what language or construct surrounds them.
+
 ## False positive suppression
 
-malcat applies several layers of suppression to avoid crying wolf:
+malcat applies several layers of automatic suppression, and exposes a simple API for adding your own.
 
-**Rule-artifact suppression** — when scanning compiled binaries with `--bin` or `--all`, the tool's own rule patterns (regex strings, rule names, keyword lists) are embedded in the binary's read-only data and will be extracted by `strings`. malcat detects these by recognising regex syntax indicators (`(?i)`, `[\s\S]`, `{0,N}`), rule detail phrases, and keyword-array concatenation blobs, and suppresses them before they match any rule.
+### Automatic suppression layers
+
+**Regex-artifact suppression** — when scanning compiled binaries with `--bin` or `--all`, `strings` extracts everything from the binary's read-only data — including any regex patterns or rule descriptions embedded in security tools, linters, or validators. malcat detects these by recognising regex syntax indicators (`(?i)`, `[\s\S]`, `{0,N}`) and suppresses them before they match.
 
 **Compiler-aware suppression** — high-entropy debug sections, empty import tables, missing PE checksums, and missing Rich headers are all normal for Go/Rust/GCC-compiled binaries. malcat detects the compiler first and suppresses the rules that would produce FPs for that toolchain.
 
-**Context-aware suppression** — short fragments like `\SAM` or `\SYSTEM` are only flagged as credential theft indicators when they appear with qualifying registry context (`HKLM`, `HKCU`, `config`, `System32`). Bare fragments that appear as substrings of source paths or rule keyword arrays are suppressed.
+**Context-aware suppression** — short fragments like `\SAM` or `\SYSTEM` are only flagged as credential theft indicators when they appear with qualifying registry context (`HKLM`, `HKCU`, `config`, `System32`). Bare fragments without context are suppressed.
+
+**Keyword-soup suppression** — compiled binaries pack adjacent string constants together in their read-only data section. A security tool's keyword arrays (`["vbox","qemu","vmware"...]`) get emitted as one concatenated blob. malcat detects when 4+ rule keyword atoms appear in a single extracted string and suppresses it.
 
 **Deduplication** — identical `(ruleID, content)` pairs at adjacent binary offsets are collapsed to a single finding.
+
+### Adding your own suppressions
+
+All custom suppressions live in `analyzer/false_positive.go` in the `UserSuppressions` variable at the bottom of the file. No other files need to be changed. Rebuild after editing.
+
+Each entry has three optional fields that are **ANDed** together. Multiple entries are **ORed**.
+
+```go
+var UserSuppressions = []struct {
+    RuleID          string // match a specific rule ID, empty = any rule
+    ContentContains string // match on the extracted string content, empty = any
+    PathContains    string // match on the file path, empty = any
+}{
+    // Examples — uncomment and adapt as needed:
+
+    // Suppress a known-good IP everywhere (e.g. your internal DNS server)
+    // {RuleID: "IP001", ContentContains: "8.8.8.8"},
+
+    // Suppress all findings inside vendored/third-party directories
+    // {PathContains: "vendor/"},
+    // {PathContains: "node_modules/"},
+    // {PathContains: "third_party/"},
+
+    // Suppress a specific rule only in test files
+    // {RuleID: "CRED004", PathContains: "_test.go"},
+    // {RuleID: "CRED004", PathContains: "testdata/"},
+
+    // Suppress a URL that belongs to your own infrastructure
+    // {RuleID: "URL001", ContentContains: "cdn.mycompany.com"},
+
+    // Suppress a false positive on a specific known pattern in a binary
+    // {RuleID: "BEVA002", ContentContains: "virtualbox_guest_additions"},
+}
+```
+
+#### Common suppression patterns
+
+**Known-good hosts in your codebase:**
+```go
+{RuleID: "IP001",  ContentContains: "192.0.2.1"},   // your staging server
+{RuleID: "URL001", ContentContains: "telemetry.myapp.com"},
+```
+
+**Test and vendor directories:**
+```go
+{PathContains: "vendor/"},
+{PathContains: "testdata/"},
+{PathContains: "fixtures/"},
+{PathContains: "_test."},
+```
+
+**Suppress a noisy rule entirely for a specific project:**
+```go
+{RuleID: "DIS004"},  // CPUID — suppress completely if you know the binary is benign
+```
+
+**Suppress a rule only in a specific file:**
+```go
+{RuleID: "CRED004", PathContains: "config.example."},  // example config with placeholder passwords
+```
+
+**Suppress a binary string scanner finding that is always a FP for your target:**
+```go
+{RuleID: "BEVA002", ContentContains: "vmware_tools_version"},  // legitimate VMware guest agent
+```
+
+#### Note on scope
+
+Suppressions apply to all scan sources — `[text]`, `[strings]`, `[pe]`, and `[disasm]`. If you want to suppress only for binary string scans, pair the entry with a known binary extension or path pattern in `PathContains`.
+
+#### Why not a config file?
+
+Keeping suppressions in Go source means they are compiled in, version-controlled alongside your rules, and have zero parsing overhead. The tradeoff is that you rebuild after any change (`go build -o malcat .`), which takes under a second.
 
 ## Adding rules
 
