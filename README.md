@@ -79,6 +79,15 @@ malcat [flags] <file|directory> [<file|directory>...] [-o output]
 |------|-------------|
 | `--all` | Enable every analysis layer: `--pe --disasm --rop --bin` combined |
 
+#### Extraction
+
+| Flag | Description |
+|------|-------------|
+| `--urls` | Extract and list all URLs found — works on text files, binaries, and PE files |
+| `--ips` | Extract all public IP addresses — private/loopback/reserved ranges are filtered out |
+
+Both flags auto-enable binary and PE scanning so nothing is missed. They can be combined (`--urls --ips`) and work with `-r` for recursive scans. Output is a clean deduplicated list rather than per-finding blocks.
+
 ### Examples
 
 ```bash
@@ -108,6 +117,18 @@ malcat --all malware.exe -o full_report.json
 
 # Batch scan a samples directory
 malcat -r --all ./samples --severity medium -o report.csv
+
+# Extract all URLs from a suspicious binary
+malcat --urls malware.exe
+
+# Extract all public IPs from a binary
+malcat --ips malware.exe
+
+# Both at once, across a whole directory
+malcat -r --urls --ips ./samples
+
+# Save extracted IPs as JSON for SIEM ingestion
+malcat --ips malware.exe -o iocs.json
 ```
 
 ## Output
@@ -137,6 +158,25 @@ Each finding shows the severity badge, finding source tag, rule name, location, 
   3 indirect CALL/JMP through registers — ROP chain or shellcode dispatcher
 ╚═════════════════════════════════════════════════════════════════════
 ```
+
+### Extraction output (`--urls` / `--ips`)
+
+When using `--urls` or `--ips`, output switches from per-finding blocks to a clean deduplicated list:
+
+```
+── URLs (3 unique) ──
+  http://evil.com/payload.sh   suspicious.exe:22041
+  https://cdn.attacker.io/update.bin   suspicious.exe:31204
+  http://malware.io/beacon   config.sh:6
+
+── Public IPs (2 unique) ──
+  8.8.8.8   config.sh:5
+  104.21.33.44   suspicious.exe:19823
+
+── Summary: 3 URL(s)  2 IP(s)  across 2 file(s) scanned ──
+```
+
+Private and reserved IP ranges (RFC 1918, loopback, link-local, documentation) are automatically filtered. Only publicly routable addresses are reported.
 
 ### Finding sources
 

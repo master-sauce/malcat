@@ -65,6 +65,10 @@ type Config struct {
 
 	// All mode: enable every analysis layer
 	All bool
+
+	// Extraction-only modes: skip all other rules, just collect URLs/IPs
+	ExtractURLs bool
+	ExtractIPs   bool
 }
 
 func (c Config) allowedExtensions() map[string]bool {
@@ -155,6 +159,14 @@ func Scan(targets []string, cfg Config) (*ScanResult, error) {
 		cfg.Disassemble = true
 		cfg.ROPDetection = true
 	}
+	// --urls / --ips: scan everything (text + binary strings + PE strings)
+	// but only run the URL/IP extraction rules.
+	if cfg.ExtractURLs || cfg.ExtractIPs {
+		cfg.ScanBinaries = true
+		cfg.ParsePE = true
+		// Override MinSeverity to Low so URL001/IP001 always pass the filter
+		cfg.MinSeverity = Low
+	}
 
 	result := &ScanResult{
 		Targets: targets,
@@ -167,9 +179,14 @@ func Scan(targets []string, cfg Config) (*ScanResult, error) {
 	allowedExts := cfg.allowedExtensions()
 
 	var rules []Rule
-	if cfg.ScanBinaries {
+	switch {
+	case cfg.ExtractURLs || cfg.ExtractIPs:
+		// Extraction mode: only the URL/IP rules, sourced from both rule sets
+		// (they are identical in DefaultRules and DefaultBinaryRules)
+		rules = extractionRules(cfg)
+	case cfg.ScanBinaries:
 		rules = DefaultBinaryRules()
-	} else {
+	default:
 		rules = DefaultRules()
 	}
 
@@ -347,6 +364,17 @@ func scanPE(path string, rules []Rule, cfg Config) FileResult {
 	}
 	fr.PE = pe
 
+	// In extraction mode (--urls / --ips) skip PE structural rules and disasm —
+	// we only want strings from the binary, not structural findings.
+	if cfg.ExtractURLs || cfg.ExtractIPs {
+		for _, sf := range scanBinaryForRules(path, rules, cfg) {
+			sf.Source = SourceBinaryStrings
+			fr.Findings = append(fr.Findings, sf)
+		}
+		fr.Findings, _ = filterFindings(fr.Findings, cfg)
+		return fr
+	}
+
 	// 1. PE structural rules
 	for _, pf := range AnalyzePE(path, pe, cfg) {
 		fr.Findings = append(fr.Findings, Finding{
@@ -419,8 +447,10 @@ func scanBinaryForRules(path string, rules []Rule, cfg Config) []Finding {
 		if line == "" {
 			continue
 		}
-		// Pre-filter: skip lines that are obviously embedded rule text
-		if isRuleArtifact(line) {
+		// Pre-filter: skip lines that are obviously embedded rule text.
+		// In extraction mode the user explicitly wants all URLs/IPs so we
+		// skip this suppression — the deduplication step still runs.
+		if !cfg.ExtractURLs && !cfg.ExtractIPs && isRuleArtifact(line) {
 			continue
 		}
 		for _, rule := range rules {
@@ -476,4 +506,24 @@ func isBinaryBytes(buf []byte) bool {
 
 func isBinary(path string) bool {
 	return isBinaryBytes(readHeader(path, 512))
+}
+
+// extractionRules returns only the URL and/or IP rules based on config.
+// These are pulled from the binary rule set (which covers both text and
+// extracted binary strings) and filtered to just what was requested.
+func extractionRules(cfg Config) []Rule {
+	var rules []Rule
+	for _, r := range DefaultBinaryRules() {
+		switch r.ID {
+		case "URL001":
+			if cfg.ExtractURLs {
+				rules = append(rules, r)
+			}
+		case "IP001":
+			if cfg.ExtractIPs {
+				rules = append(rules, r)
+			}
+		}
+	}
+	return rules
 }

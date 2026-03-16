@@ -161,7 +161,27 @@ func highlightMatch(content, matchText, matchColor string) string {
 
 // ──────────────── TEXT ────────────────
 
+func isExtractionResult(result *analyzer.ScanResult) bool {
+	// All findings are URL001 or IP001 only
+	if result.Stats.TotalFindings == 0 {
+		return false
+	}
+	for _, fr := range result.Files {
+		for _, f := range fr.Findings {
+			if f.RuleID != "URL001" && f.RuleID != "IP001" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (r *Reporter) writeText(w io.Writer, result *analyzer.ScanResult) error {
+	// Extraction mode: --urls / --ips shows a clean deduplicated list
+	if isExtractionResult(result) {
+		return r.writeExtractionText(w, result)
+	}
+
 	total := result.Stats.TotalFindings
 
 	// Always iterate files so PE metadata is shown even for clean results.
@@ -479,4 +499,77 @@ func (r *Reporter) writeCSV(w io.Writer, result *analyzer.ScanResult) error {
 		}
 	}
 	return cw.Error()
+}
+
+// ──────────────── EXTRACTION (--urls / --ips) ────────────────
+
+// writeExtractionText renders a clean deduplicated list grouped by type and file.
+func (r *Reporter) writeExtractionText(w io.Writer, result *analyzer.ScanResult) error {
+	// Collect unique values per type across all files
+	type hit struct {
+		value string
+		file  string
+		line  int
+	}
+	seenURLs := make(map[string]bool)
+	seenIPs := make(map[string]bool)
+	var urls, ips []hit
+
+	for _, fr := range result.Files {
+		for _, f := range fr.Findings {
+			val := f.MatchText
+			if val == "" {
+				val = strings.TrimSpace(f.Content)
+			}
+			switch f.RuleID {
+			case "URL001":
+				if !seenURLs[val] {
+					seenURLs[val] = true
+					urls = append(urls, hit{val, f.File, f.Line})
+				}
+			case "IP001":
+				if !seenIPs[val] {
+					seenIPs[val] = true
+					ips = append(ips, hit{val, f.File, f.Line})
+				}
+			}
+		}
+	}
+
+	filesScanned := result.Stats.FilesScanned
+
+	if len(urls) == 0 && len(ips) == 0 {
+		fmt.Fprintf(w, "✅  No URLs or IPs found. (%d file(s) scanned)\n", filesScanned)
+		return nil
+	}
+
+	if len(urls) > 0 {
+		fmt.Fprintf(w, "\n%s── URLs (%d unique) ──%s\n", colorBold, len(urls), colorReset)
+		for _, h := range urls {
+			loc := ""
+			if h.line > 0 {
+				loc = fmt.Sprintf("  %s%s:%d%s", colorGray, h.file, h.line, colorReset)
+			} else {
+				loc = fmt.Sprintf("  %s%s%s", colorGray, h.file, colorReset)
+			}
+			fmt.Fprintf(w, "  %s%s%s%s\n", colorCyan, h.value, colorReset, loc)
+		}
+	}
+
+	if len(ips) > 0 {
+		fmt.Fprintf(w, "\n%s── Public IPs (%d unique) ──%s\n", colorBold, len(ips), colorReset)
+		for _, h := range ips {
+			loc := ""
+			if h.line > 0 {
+				loc = fmt.Sprintf("  %s%s:%d%s", colorGray, h.file, h.line, colorReset)
+			} else {
+				loc = fmt.Sprintf("  %s%s%s", colorGray, h.file, colorReset)
+			}
+			fmt.Fprintf(w, "  %s%s%s%s\n", colorYellow, h.value, colorReset, loc)
+		}
+	}
+
+	fmt.Fprintf(w, "\n%s── Summary: %d URL(s)  %d IP(s)  across %d file(s) scanned ──%s\n",
+		colorGray, len(urls), len(ips), filesScanned, colorReset)
+	return nil
 }

@@ -66,6 +66,10 @@ func Execute() error {
 
 		// All-in-one
 		all bool
+
+		// Extraction modes
+		extractURLs bool
+		extractIPs  bool
 	)
 
 	args, outputFile := extractFlag(os.Args[1:], "o", "output")
@@ -88,6 +92,10 @@ func Execute() error {
 
 	// All-in-one
 	flag.BoolVar(&all, "all", false, "Enable all analysis layers: --pe --disasm --rop --bin combined")
+
+	// Extraction flags
+	flag.BoolVar(&extractURLs, "urls", false, "Extract and list all URLs found (works on text files, binaries, and PE files)")
+	flag.BoolVar(&extractIPs, "ips", false, "Extract and list all public IP addresses found (works on text files, binaries, and PE files)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `
@@ -114,6 +122,12 @@ PE ANALYSIS (Windows executables):
       --disasm-depth N   Max instructions per section (default 5000)
       --entropy float    Entropy threshold for packed-section detection (default 7.2)
 
+EXTRACTION:
+      --urls             Extract all URLs from the target (text, binary, or PE)
+      --ips              Extract all public IP addresses from the target
+                         Both flags work alongside other flags and auto-enable
+                         binary/PE scanning so nothing is missed.
+
 ALL-IN-ONE:
       --all              Enable every analysis layer simultaneously:
                            PE parsing + disassembly + ROP + binary strings
@@ -130,6 +144,9 @@ EXAMPLES:
   malcat --pe --entropy 6.5 packed.exe
   malcat --all malware.exe -o full_report.json
   malcat -r --all ./samples -o report.csv
+  malcat --urls suspicious.exe
+  malcat --ips --urls ./cloned-repo -r
+  malcat --ips malware.exe -o ips.json
 
 FINDING SOURCES (shown in output):
   [text]    Line-based source code / script scan
@@ -168,6 +185,8 @@ FINDING SOURCES (shown in output):
 		DisasmDepth:      disasmDepth,
 		EntropyThreshold: entropyThreshold,
 		All:              all,
+		ExtractURLs:      extractURLs,
+		ExtractIPs:       extractIPs,
 	}
 
 	results, err := analyzer.Scan(targets, cfg)
