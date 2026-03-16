@@ -72,7 +72,9 @@ func newRuleWithFilter(id, name, category string, sev Severity, details, pattern
 }
 
 func DefaultRules() []Rule {
-	return baseRules()
+	rules := baseRules()
+	rules = append(rules, charBuildingRules()...)
+	return rules
 }
 
 func DefaultBinaryRules() []Rule {
@@ -378,3 +380,193 @@ func baseRules() []Rule {
 			"virtualprotect", "decrypt", "self-modifying"),
 	}
 }
+
+// charBuildingRules returns rules that detect C2 string construction from
+// character codes — a common obfuscation technique to hide malicious strings
+// from static string scanners. Each language has its own idiom.
+func charBuildingRules() []Rule {
+	return []Rule{
+
+		// ─── PYTHON ──────────────────────────────────────────────────────────
+
+		newRuleWithFilter("CBP001", "Python chr() C2 string construction", "Obfuscated C2", Critical,
+			"C2-relevant string built from chr() calls — hides cmd/shell/http from string scanners",
+			// chr(N)+chr(N)+... chain of 3+ calls, covering cmd/sh/http/exec patterns
+			`(?i)chr\s*\(\s*(\d+)\s*\)\s*\+\s*chr\s*\(\s*(\d+)\s*\)\s*\+\s*chr\s*\(\s*(\d+)\s*\)`,
+			filterChrChainNotAllSame,
+			"chr("),
+
+		newRule("CBP002", "Python bytes/bytearray C2 construction", "Obfuscated C2", Critical,
+			"Shell or network path constructed via bytes()/bytearray() from integer list",
+			`(?i)(bytes|bytearray)\s*\(\s*\[[\s\d,]{10,}\]\s*\)\s*\.\s*(decode|split|strip|find|replace)`,
+			"bytes", "bytearray"),
+
+		newRule("CBP003", "Python join+chr list comprehension", "Obfuscated C2", Critical,
+			"C2 string assembled with join(chr(x) for x in [literal ints]) — classic Python obfuscation",
+			// Require chr(LITERAL_INT) specifically — not chr(expression)
+			// This excludes rot13-style chr((ord(c)+N)%26) patterns
+			`(?i)(''|""|'|")\s*\.\s*join\s*\(\s*\[?\s*chr\s*\(\s*\d+\s*\)`,
+			"join", "chr("),
+
+		// ─── JAVASCRIPT / NODE ───────────────────────────────────────────────
+
+		newRule("CBJ001", "JS fromCharCode C2 construction", "Obfuscated C2", Critical,
+			"String.fromCharCode() with 4+ values — obfuscated command or URL",
+			`(?i)String\s*\.\s*fromCharCode\s*\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,`,
+			"fromcharcode"),
+
+		newRule("CBJ002", "JS hex escape C2 string", "Obfuscated C2", High,
+			"String of 6+ hex escapes — hidden command, path, or URL",
+			`(\\x[0-9a-fA-F]{2}){6,}`,
+			"\\x"),
+
+		newRule("CBJ003", "JS unicode escape C2 string", "Obfuscated C2", High,
+			"String of 4+ unicode escapes — obfuscated command or URL",
+			`(\\u00[0-9a-fA-F]{2}){4,}`,
+			"\\u00"),
+
+		newRule("CBJ004", "JS map+fromCharCode array construction", "Obfuscated C2", Critical,
+			"Array of char codes mapped through fromCharCode — common Node.js obfuscation",
+			`(?i)\[\s*\d+\s*,\s*\d+[\d\s,]+\]\s*\.\s*map\s*\([\s\S]{0,40}fromCharCode`,
+			"fromcharcode", "map("),
+
+		// ─── POWERSHELL ──────────────────────────────────────────────────────
+
+		newRule("CBPS001", "[char] cast C2 construction", "Obfuscated C2", Critical,
+			"PowerShell [char]N+[char]N chain building a command string",
+			`(?i)\[char\]\s*\d+\s*\+\s*\[char\]\s*\d+\s*\+\s*\[char\]\s*\d+`,
+			"[char]"),
+
+		newRule("CBPS002", "PowerShell -join [char[]] construction", "Obfuscated C2", Critical,
+			"-join([char[]](N,N,N...)) building a hidden command — PowerShell obfuscation",
+			`(?i)-join\s*\(\s*\[char\[\]\]\s*\(\s*\d+\s*,\s*\d+`,
+			"-join", "[char"),
+
+		newRule("CBPS003", "PowerShell ASCII GetString construction", "Obfuscated C2", Critical,
+			"[Encoding]::ASCII.GetString([byte[]](N,N,N)) — decoding hidden string at runtime",
+			`(?i)(System\.Text\.Encoding|::ASCII|::UTF8|::Unicode)\s*\]?\s*::\s*(ASCII|UTF8|Unicode|GetString)[\s\S]{0,60}\[byte\[\]\]`,
+			"getstring", "[byte"),
+
+		// ─── C / C++ ─────────────────────────────────────────────────────────
+
+		newRule("CBC001", "C char array C2 construction", "Obfuscated C2", High,
+			"char[] initialised with 6+ decimal values — hidden string in C/C++ source",
+			`(?i)(char|CHAR|wchar_t|WCHAR)\s+\w+\s*\[\s*\]\s*=\s*\{\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+`,
+			"char", "wchar"),
+
+		newRule("CBC002", "C wide char array C2 construction", "Obfuscated C2", High,
+			"WCHAR/wchar_t array with L'x' char literals — obfuscated wide string",
+			`(?i)(WCHAR|wchar_t)\s+\w+\s*\[\s*\]\s*=\s*\{(\s*L'[^']'\s*,){4,}`,
+			"wchar", "L'"),
+
+		// ─── GO ──────────────────────────────────────────────────────────────
+
+		newRule("CBG001", "Go []byte literal C2 construction", "Obfuscated C2", Critical,
+			"string([]byte{N,N,N,...}) with 5+ values — Go obfuscated string construction",
+			`(?i)string\s*\(\s*\[\s*\]\s*(byte|rune)\s*\{(\s*\d+\s*,){4,}\s*\d+\s*\}\s*\)`,
+			"[]byte", "[]rune"),
+
+		// CBG002 removed: bare []byte{N,N,N...} is too common in legitimate Go code
+		// (PNG magic, TLS constants, test vectors, hash digests).
+		// CBG001 (string([]byte{...})) covers the clear obfuscation case.
+		// CBX001 covers the []byte{...} + exec combo.
+
+		// ─── RUST ────────────────────────────────────────────────────────────
+
+		newRule("CBR001", "Rust vec byte C2 construction", "Obfuscated C2", Critical,
+			"String::from_utf8(vec![N,N,N...]) — Rust obfuscated string construction",
+			`(?i)(String::from_utf8|str::from_utf8|from_utf8_unchecked)\s*\(\s*(vec!\s*)?\[(\s*\d+\s*(u8)?\s*,){4,}`,
+			"from_utf8", "vec!["),
+
+		// ─── NUMERIC BYTE SEQUENCE FINGERPRINTS ─────────────────────────────
+		// Detect the actual byte values that decode to C2-critical strings.
+		// These fire regardless of language — any array/list containing these
+		// specific sequences is building a known-malicious string.
+
+		newRule("CBN001", "Byte sequence: /bin/sh", "Obfuscated C2", Critical,
+			"Numeric byte sequence 47,98,105,110,47,115,104 decodes to '/bin/sh'",
+			`\b47\s*,\s*98\s*,\s*105\s*,\s*110\s*,\s*47\s*,\s*115\s*,\s*104\b`,
+			"47", "98", "105"),
+
+		newRule("CBN002", "Byte sequence: /bin/bash", "Obfuscated C2", Critical,
+			"Numeric byte sequence 47,98,105,110,47,98,97,115,104 decodes to '/bin/bash'",
+			`\b47\s*,\s*98\s*,\s*105\s*,\s*110\s*,\s*47\s*,\s*98\s*,\s*97\s*,\s*115\s*,\s*104\b`,
+			"47", "98", "105"),
+
+		newRule("CBN003", "Byte sequence: cmd.exe", "Obfuscated C2", Critical,
+			"Numeric byte sequence 99,109,100,46,101,120,101 decodes to 'cmd.exe'",
+			`\b99\s*,\s*109\s*,\s*100\s*,\s*46\s*,\s*101\s*,\s*120\s*,\s*101\b`,
+			"99", "109", "100"),
+
+		newRule("CBN004", "Byte sequence: powershell", "Obfuscated C2", Critical,
+			"Numeric byte sequence 112,111,119,101,114,115,104,101,108,108 decodes to 'powershell'",
+			`\b112\s*,\s*111\s*,\s*119\s*,\s*101\s*,\s*114\s*,\s*115\s*,\s*104\b`,
+			"112", "111", "119"),
+
+		newRule("CBN005", "Byte sequence: http://", "Obfuscated C2", Critical,
+			"Numeric byte sequence 104,116,116,112,58,47,47 decodes to 'http://'",
+			`\b104\s*,\s*116\s*,\s*116\s*,\s*112\s*,\s*58\s*,\s*47\s*,\s*47\b`,
+			"104", "116", "58"),
+
+		newRule("CBN006", "Byte sequence: https://", "Obfuscated C2", Critical,
+			"Numeric byte sequence 104,116,116,112,115,58,47,47 decodes to 'https://'",
+			`\b104\s*,\s*116\s*,\s*116\s*,\s*112\s*,\s*115\s*,\s*58\s*,\s*47\s*,\s*47\b`,
+			"104", "116", "115"),
+
+		newRule("CBN007", "Byte sequence: /dev/tcp/", "Obfuscated C2", Critical,
+			"Numeric byte sequence 47,100,101,118,47,116,99,112,47 decodes to '/dev/tcp/'",
+			`\b47\s*,\s*100\s*,\s*101\s*,\s*118\s*,\s*47\s*,\s*116\s*,\s*99\s*,\s*112\s*,\s*47\b`,
+			"47", "100", "101"),
+
+		newRule("CBN008", "Hex escape sequence: /bin/sh", "Obfuscated C2", Critical,
+			"Hex escape sequence \\x2f\\x62\\x69\\x6e\\x2f\\x73\\x68 decodes to '/bin/sh'",
+			`\\x2[fF]\\x6[2B]\\x69\\x6[eE]\\x2[fF]\\x7[3]\\x6[8]`,
+			"\\x2f", "\\x62"),
+
+		newRule("CBN009", "Hex escape sequence: cmd.exe", "Obfuscated C2", Critical,
+			"Hex escape sequence \\x63\\x6d\\x64 decodes to 'cmd'",
+			`(?i)\\x63\\x6d\\x64(\\x2e\\x65\\x78\\x65)?`,
+			"\\x63", "\\x6d"),
+
+		newRule("CBN010", "Hex escape sequence: http://", "Obfuscated C2", Critical,
+			"Hex escape sequence \\x68\\x74\\x74\\x70 decodes to 'http'",
+			`(?i)\\x68\\x74\\x74\\x70(\\x73)?\\x3a\\x2f\\x2f`,
+			"\\x68", "\\x74"),
+
+		// ─── GENERIC HIGH-DENSITY CHAR CONSTRUCTION ─────────────────────────
+
+		newRule("CBX001", "Dense numeric array near exec/network call", "Obfuscated C2", High,
+			"Array of 8+ numeric values immediately followed or preceded by exec/network call — likely obfuscated command",
+			`(?i)(\{|=|\()\s*(\d{2,3}\s*,\s*){7,}\d{2,3}\s*(\}|\))\s*[\s\S]{0,200}(exec|eval|system|socket|connect|subprocess|cmd|shell|invoke|spawn)`,
+			"exec", "eval", "system", "socket", "connect"),
+
+		newRule("CBX002", "Dense numeric array near exec/network call (reversed)", "Obfuscated C2", High,
+			"Exec/network call immediately followed by array of 8+ numeric values — likely obfuscated command",
+			`(?i)(exec|eval|system|socket|connect|subprocess|invoke|spawn)\s*[\s\S]{0,200}(\{|=|\()\s*(\d{2,3}\s*,\s*){7,}\d{2,3}`,
+			"exec", "eval", "system", "socket", "connect"),
+	}
+}
+
+// filterChrChainNotAllSame rejects chr() chains where all values are identical
+// (e.g. chr(45)+chr(45)+chr(45) = "---") which are separator/decorator patterns,
+// not C2 string construction. Real C2 strings need varied character values.
+func filterChrChainNotAllSame(matched string) bool {
+	// Extract all decimal numbers from the match
+	re := reChrDigits
+	nums := re.FindAllString(matched, -1)
+	if len(nums) < 3 {
+		return true // can't determine, let it through
+	}
+	// If all extracted numbers are the same, it's a separator pattern
+	first := nums[0]
+	allSame := true
+	for _, n := range nums[1:] {
+		if n != first {
+			allSame = false
+			break
+		}
+	}
+	return !allSame // return true (keep) only when NOT all same
+}
+
+var reChrDigits = regexp.MustCompile(`\d+`)

@@ -272,8 +272,12 @@ func filterFindings(findings []Finding, cfg Config) ([]Finding, int) {
 		}
 		filtered = append(filtered, f)
 	}
-	// Deduplicate remaining findings
+	// Apply user-defined suppressions (rule ID, content, path)
 	before := len(filtered)
+	filtered = applyUserSuppressions(filtered)
+	suppressed += before - len(filtered)
+	// Deduplicate remaining findings
+	before = len(filtered)
 	filtered = deduplicateFindings(filtered)
 	suppressed += before - len(filtered)
 	return filtered, suppressed

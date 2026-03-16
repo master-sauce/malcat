@@ -41,7 +41,7 @@ func isPublicIPv4(s string) bool {
 
 // BinaryRules returns rules for compiled binary analysis via strings output.
 func BinaryRules() []Rule {
-	return []Rule{
+	rules := []Rule{
 
 		newRule("URL001", "URL in file", "Network", Medium,
 			"URL found in file",
@@ -245,5 +245,88 @@ func BinaryRules() []Rule {
 			"Self-modifying decryption routine - highly indicative of malware",
 			`(?i)(VirtualProtect|PAGE_EXECUTE_READWRITE|PROT_EXEC)[\s\S]{0,200}(memcpy|memset|xor)[\s\S]{0,200}(decrypt|decode)[\s\S]{0,200}(jmp|call|ret)`,
 			"virtualprotect", "decrypt", "self-modifying"),
+	}
+	rules = append(rules, BinaryCharBuildingRules()...)
+	return rules
+}
+
+// BinaryCharBuildingRules returns char-construction detection rules tuned for
+// strings extracted from compiled binaries. The patterns here focus on what
+// survives compilation: residual byte arrays in rodata, debug info strings,
+// and language-specific runtime construction patterns.
+func BinaryCharBuildingRules() []Rule {
+	return []Rule{
+
+		// Decimal byte sequences that decode to C2 strings
+		// (same as source rules but these appear in disassembly listings,
+		//  debug info, and compiler-emitted initializer data)
+
+		newRule("CBN001", "Byte sequence: /bin/sh", "Obfuscated C2", Critical,
+			"Numeric byte sequence 47,98,105,110,47,115,104 decodes to '/bin/sh'",
+			`\b47\s*,\s*98\s*,\s*105\s*,\s*110\s*,\s*47\s*,\s*115\s*,\s*104\b`,
+			"47", "98"),
+
+		newRule("CBN002", "Byte sequence: /bin/bash", "Obfuscated C2", Critical,
+			"Numeric byte sequence decodes to '/bin/bash'",
+			`\b47\s*,\s*98\s*,\s*105\s*,\s*110\s*,\s*47\s*,\s*98\s*,\s*97\s*,\s*115\s*,\s*104\b`,
+			"47", "98"),
+
+		newRule("CBN003", "Byte sequence: cmd.exe", "Obfuscated C2", Critical,
+			"Numeric byte sequence 99,109,100,46,101,120,101 decodes to 'cmd.exe'",
+			`\b99\s*,\s*109\s*,\s*100\s*,\s*46\s*,\s*101\s*,\s*120\s*,\s*101\b`,
+			"99", "109"),
+
+		newRule("CBN004", "Byte sequence: powershell", "Obfuscated C2", Critical,
+			"Numeric byte sequence decodes to 'powershell'",
+			`\b112\s*,\s*111\s*,\s*119\s*,\s*101\s*,\s*114\s*,\s*115\s*,\s*104\b`,
+			"112", "111"),
+
+		newRule("CBN005", "Byte sequence: http://", "Obfuscated C2", Critical,
+			"Numeric byte sequence 104,116,116,112,58,47,47 decodes to 'http://'",
+			`\b104\s*,\s*116\s*,\s*116\s*,\s*112\s*,\s*58\s*,\s*47\s*,\s*47\b`,
+			"104", "116"),
+
+		newRule("CBN006", "Byte sequence: https://", "Obfuscated C2", Critical,
+			"Numeric byte sequence decodes to 'https://'",
+			`\b104\s*,\s*116\s*,\s*116\s*,\s*112\s*,\s*115\s*,\s*58\s*,\s*47\s*,\s*47\b`,
+			"104", "116"),
+
+		newRule("CBN007", "Byte sequence: /dev/tcp/", "Obfuscated C2", Critical,
+			"Numeric byte sequence decodes to '/dev/tcp/'",
+			`\b47\s*,\s*100\s*,\s*101\s*,\s*118\s*,\s*47\s*,\s*116\s*,\s*99\s*,\s*112\s*,\s*47\b`,
+			"47", "100"),
+
+		// Hex escape strings surviving in binary string tables
+		newRule("CBN008", "Hex escape: /bin/sh", "Obfuscated C2", Critical,
+			"Hex escape sequence decodes to '/bin/sh'",
+			`(?i)\\x2f\\x62\\x69\\x6e\\x2f\\x73\\x68`,
+			"\\x2f", "\\x62"),
+
+		newRule("CBN009", "Hex escape: cmd.exe", "Obfuscated C2", Critical,
+			"Hex escape sequence decodes to 'cmd'",
+			`(?i)\\x63\\x6d\\x64(\\x2e\\x65\\x78\\x65)?`,
+			"\\x63", "\\x6d"),
+
+		newRule("CBN010", "Hex escape: http://", "Obfuscated C2", Critical,
+			"Hex escape sequence decodes to 'http://'",
+			`(?i)\\x68\\x74\\x74\\x70(\\x73)?\\x3a\\x2f\\x2f`,
+			"\\x68", "\\x74"),
+
+		// PowerShell [char] patterns surviving in script blocks embedded in binaries
+		newRule("CBPS001", "[char] C2 construction in binary", "Obfuscated C2", Critical,
+			"PowerShell [char]N+[char]N chain — obfuscated command string in embedded script",
+			`(?i)\[char\]\s*\d+\s*\+\s*\[char\]\s*\d+\s*\+\s*\[char\]\s*\d+`,
+			"[char]"),
+
+		newRule("CBPS002", "-join [char[]] in binary", "Obfuscated C2", Critical,
+			"-join([char[]](N,N,...)) — PowerShell obfuscated command in embedded script",
+			`(?i)-join\s*\(\s*\[char\[\]\]\s*\(\s*\d+\s*,\s*\d+`,
+			"-join", "[char"),
+
+		// Dense numeric arrays near execution context
+		newRule("CBX001", "Dense numeric array near exec context", "Obfuscated C2", High,
+			"8+ numeric values near exec/network call — obfuscated command construction",
+			`(?i)(\{|=|\()\s*(\d{2,3}\s*,\s*){7,}\d{2,3}\s*(\}|\))\s*[\s\S]{0,200}(exec|eval|system|socket|connect|cmd|shell|invoke|spawn)`,
+			"exec", "eval", "system", "socket"),
 	}
 }
