@@ -5,7 +5,7 @@ A fast, low-false-positive static analyzer for detecting malicious patterns in s
 ## Installation
 
 ```bash
-# Linux / macOS
+# Linux
 curl -fsSL https://raw.githubusercontent.com/master-sauce/malcat/main/install.sh | bash
 
 # Windows
