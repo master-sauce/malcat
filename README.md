@@ -20,6 +20,42 @@ cd malcat
 go build -o malcat .
 ```
 
+## Requirements
+
+malcat itself has no runtime dependencies — it is a single static binary.
+
+The `--bin`, `--all`, and `--urls`/`--ips` flags on non-PE binary files require the `strings` utility to be available on your `PATH`. This is the only external dependency.
+
+### Installing `strings`
+
+**Linux** — pre-installed on every distribution as part of GNU Binutils:
+```bash
+# Verify it's present
+strings --version
+```
+
+**macOS** — pre-installed with Xcode Command Line Tools:
+```bash
+# Install if missing
+xcode-select --install
+
+# Verify
+strings -v
+```
+
+**Windows** — not included with Windows by default. Two options that put `strings` on your PATH automatically:
+
+Option 1 — winget (recommended):
+```powershell
+winget install Microsoft.Sysinternals.Strings
+```
+
+Option 2 — Microsoft Store (installs the full Sysinternals Suite):
+
+open the Microsoft Store and search for **Sysinternals Suite**. Once installed, `strings.exe` is available on your PATH immediately — no manual configuration needed.
+
+> **Note:** `--pe`, `--disasm`, `--rop`, and all PE analysis features work without `strings` — they parse the binary directly. Only the `--bin` string-extraction path requires it. If `strings` is not found, `--bin` returns no findings rather than crashing.
+
 ## Philosophy
 
 Most scanners fire on every `exec()`, `eval()`, or backtick — generating hundreds of false positives in normal code. malcat takes the opposite approach: rules require **specific combinations** that are nearly impossible to explain as innocent code. A single `exec()` call never fires. A socket connection followed by a shell spawn does.
@@ -62,7 +98,7 @@ malcat [flags] <file|directory> [<file|directory>...] [-o output]
 
 | Flag | Description |
 |------|-------------|
-| `--bin`, `--binaries` | String-extraction scan on binary files using `strings` |
+| `--bin`, `--binaries` | String-extraction scan on binary files using the `strings` utility (see [Requirements](#requirements)) |
 
 #### PE analysis (Windows executables)
 
@@ -406,7 +442,7 @@ go build -o malcat .
 ## Limitations
 
 - Static analysis only — cannot detect purely runtime behaviour or encrypted payloads that decode in memory
-- Binary `--bin` mode depends on the `strings` utility being on PATH (standard on Linux/macOS; available via Git for Windows or WSL on Windows)
+- Binary `--bin` mode requires the `strings` utility on PATH — see [Requirements](#requirements) for installation instructions. `--pe` and `--disasm` do not require it
 - Disassembly (`--disasm`) uses linear sweep, not recursive descent — it can lose the instruction stream after indirect branches in heavily obfuscated code
 - Compiler detection is heuristic — a stripped or deliberately mismatched binary may be misidentified, causing either missed findings or unexpected suppressions
 - Results are leads to investigate, not definitive verdicts
